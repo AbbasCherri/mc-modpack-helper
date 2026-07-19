@@ -7,7 +7,6 @@ import dev.modpackhelper.core.model.ModInfo;
 import dev.modpackhelper.core.model.OnlineModInfo;
 import dev.modpackhelper.core.model.OnlineSource;
 import dev.modpackhelper.core.online.ApiKeyStore;
-import dev.modpackhelper.core.replace.ModReplacer;
 import dev.modpackhelper.core.replace.ReplacementCandidate;
 import dev.modpackhelper.core.replace.ReplacementResult;
 import java.nio.file.Path;
