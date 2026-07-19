@@ -57,25 +57,7 @@ public class OnlineLookupCoordinator {
                     projectIds.isEmpty() ? Map.of() : modrinth.projects(projectIds);
             Map<String, ModrinthClient.Version> latestByProject =
                     latestModrinthVersions(projectIds, gameVersion);
-
-            for (var match : matches.entrySet()) {
-                ModEntry entry = bySha1.get(match.getKey());
-                ModrinthClient.VersionMatch version = match.getValue();
-                ModrinthClient.Project project = projects.get(version.projectId());
-                if (entry == null || project == null) {
-                    continue;
-                }
-                ModrinthClient.Version latest = latestByProject.get(version.projectId());
-                results.put(entry.fileInfo().path(), new OnlineModInfo(
-                        OnlineSource.MODRINTH,
-                        project.id(),
-                        project.title(),
-                        "",
-                        project.url(),
-                        version.versionNumber(),
-                        latest == null ? "" : latest.versionNumber(),
-                        latest != null && !latest.id().equals(version.versionId())));
-            }
+            buildModrinthResults(bySha1, matches, projects, latestByProject, results);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return List.of();
@@ -90,6 +72,31 @@ public class OnlineLookupCoordinator {
             }
         }
         return unresolved;
+    }
+
+    private static void buildModrinthResults(Map<String, ModEntry> bySha1,
+            Map<String, ModrinthClient.VersionMatch> matches,
+            Map<String, ModrinthClient.Project> projects,
+            Map<String, ModrinthClient.Version> latestByProject,
+            Map<Path, OnlineModInfo> results) {
+        for (var match : matches.entrySet()) {
+            ModEntry entry = bySha1.get(match.getKey());
+            ModrinthClient.VersionMatch version = match.getValue();
+            ModrinthClient.Project project = projects.get(version.projectId());
+            if (entry == null || project == null) {
+                continue;
+            }
+            ModrinthClient.Version latest = latestByProject.get(version.projectId());
+            results.put(entry.fileInfo().path(), new OnlineModInfo(
+                    OnlineSource.MODRINTH,
+                    project.id(),
+                    project.title(),
+                    "",
+                    project.url(),
+                    version.versionNumber(),
+                    latest == null ? "" : latest.versionNumber(),
+                    latest != null && !latest.id().equals(version.versionId())));
+        }
     }
 
     private Map<String, ModrinthClient.Version> latestModrinthVersions(
@@ -112,7 +119,7 @@ public class OnlineLookupCoordinator {
         return latest;
     }
 
-    static ModrinthClient.Version pickLatest(List<ModrinthClient.Version> versions) {
+    public static ModrinthClient.Version pickLatest(List<ModrinthClient.Version> versions) {
         return versions.stream()
                 .filter(ModrinthClient.Version::isRelease)
                 .findFirst()
@@ -138,29 +145,37 @@ public class OnlineLookupCoordinator {
             Set<Integer> modIds = new HashSet<>();
             matches.values().forEach(m -> modIds.add(m.modId()));
             Map<Integer, CurseForgeClient.Mod> mods = modIds.isEmpty() ? Map.of() : client.mods(modIds);
-
-            for (var match : matches.entrySet()) {
-                ModEntry entry = byFingerprint.get(match.getKey());
-                CurseForgeClient.FileMatch file = match.getValue();
-                CurseForgeClient.Mod mod = mods.get(file.modId());
-                if (entry == null || mod == null) {
-                    continue;
-                }
-                CurseForgeClient.ModFile latest = latestCurseForgeFile(client, file.modId(), gameVersion);
-                results.put(entry.fileInfo().path(), new OnlineModInfo(
-                        OnlineSource.CURSEFORGE,
-                        Integer.toString(mod.id()),
-                        mod.name(),
-                        mod.authors(),
-                        mod.websiteUrl() == null ? "" : mod.websiteUrl(),
-                        file.fileName(),
-                        latest == null ? "" : latest.fileName(),
-                        latest != null && latest.id() != file.fileId()));
-            }
+            buildCurseForgeResults(client, byFingerprint, matches, mods, gameVersion, results);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (Exception e) {
             // CurseForge unreachable: Modrinth results already collected stay untouched
+        }
+    }
+
+    private void buildCurseForgeResults(CurseForgeClient client,
+            Map<Long, ModEntry> byFingerprint,
+            Map<Long, CurseForgeClient.FileMatch> matches,
+            Map<Integer, CurseForgeClient.Mod> mods,
+            Optional<String> gameVersion,
+            Map<Path, OnlineModInfo> results) {
+        for (var match : matches.entrySet()) {
+            ModEntry entry = byFingerprint.get(match.getKey());
+            CurseForgeClient.FileMatch file = match.getValue();
+            CurseForgeClient.Mod mod = mods.get(file.modId());
+            if (entry == null || mod == null) {
+                continue;
+            }
+            CurseForgeClient.ModFile latest = latestCurseForgeFile(client, file.modId(), gameVersion);
+            results.put(entry.fileInfo().path(), new OnlineModInfo(
+                    OnlineSource.CURSEFORGE,
+                    Integer.toString(mod.id()),
+                    mod.name(),
+                    mod.authors(),
+                    mod.websiteUrl() == null ? "" : mod.websiteUrl(),
+                    file.fileName(),
+                    latest == null ? "" : latest.fileName(),
+                    latest != null && latest.id() != file.fileId()));
         }
     }
 
