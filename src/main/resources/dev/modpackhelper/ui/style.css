@@ -1,0 +1,15 @@
+.table-row-cell:duplicate {
+    -fx-background-color: #b58900;
+}
+
+.table-row-cell:duplicate:selected {
+    -fx-background-color: #8a6800;
+}
+
+.table-row-cell:cross-loader {
+    -fx-background-color: #cb4b16;
+}
+
+.table-row-cell:cross-loader:selected {
+    -fx-background-color: #9c3a11;
+}
