@@ -7,7 +7,11 @@ import dev.modpackhelper.core.model.ModInfo;
 import dev.modpackhelper.core.model.OnlineModInfo;
 import dev.modpackhelper.core.model.OnlineSource;
 import dev.modpackhelper.core.online.ApiKeyStore;
+import dev.modpackhelper.core.replace.ModReplacer;
+import dev.modpackhelper.core.replace.ReplacementCandidate;
+import dev.modpackhelper.core.replace.ReplacementResult;
 import java.nio.file.Path;
+import java.util.Optional;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -18,11 +22,14 @@ import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.SelectionMode;
 import javafx.scene.control.Separator;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
+import javafx.scene.control.TextField;
 import javafx.scene.control.ToolBar;
 import javafx.scene.layout.BorderPane;
 import javafx.stage.DirectoryChooser;
@@ -38,9 +45,11 @@ public class MainView extends BorderPane {
     private final Label statusLabel = new Label("");
     private final Button rescanButton = new Button("Rescan");
     private final CheckBox onlineCheckBox = new CheckBox("Check online");
+    private final TextField mcVersionField = new TextField();
     private final ApiKeyStore keyStore = new ApiKeyStore();
 
     private Path currentFolder;
+    private Optional<String> detectedGameVersion = Optional.empty();
 
     public MainView() {
         Button openButton = new Button("Open Folder...");
@@ -49,9 +58,12 @@ public class MainView extends BorderPane {
         rescanButton.setOnAction(e -> scan());
         Button settingsButton = new Button("Settings...");
         settingsButton.setOnAction(e -> new SettingsDialog(keyStore).showAndWait());
+        mcVersionField.setPromptText("MC version");
+        mcVersionField.setPrefWidth(90);
 
         setTop(new ToolBar(openButton, rescanButton, new Separator(),
-                onlineCheckBox, settingsButton, new Separator(), pathLabel));
+                onlineCheckBox, new Label("MC:"), mcVersionField, settingsButton,
+                new Separator(), pathLabel));
         setCenter(buildTable());
         setBottom(statusLabel);
         statusLabel.setPadding(new Insets(4, 8, 4, 8));
@@ -79,6 +91,10 @@ public class MainView extends BorderPane {
         table.setRowFactory(new ConflictRowFactory());
         table.getSelectionModel().setSelectionMode(SelectionMode.SINGLE);
         table.setPlaceholder(new Label("Open a mods folder to get started"));
+
+        MenuItem replaceItem = new MenuItem("Replace with compatible version");
+        replaceItem.setOnAction(e -> replaceSelected());
+        table.setContextMenu(new ContextMenu(replaceItem));
         return table;
     }
 
@@ -173,15 +189,70 @@ public class MainView extends BorderPane {
                 OnlineModInfo info = result.matches().get(entry.fileInfo().path());
                 return info == null ? entry : entry.withOnlineInfo(info);
             });
+            detectedGameVersion = result.gameVersion();
+            if (mcVersionField.getText().isBlank()) {
+                detectedGameVersion.ifPresent(mcVersionField::setText);
+            }
             String version = result.gameVersion()
                     .map(v -> "MC " + v + " detected")
-                    .orElse("MC version unknown, no update check");
+                    .orElse("MC version unknown, set it in the MC field for update checks");
             statusLabel.setText("%d of %d matched online | %s".formatted(
                     result.matches().size(), entries.size(), version));
         });
         task.setOnFailed(e ->
                 statusLabel.setText("Online lookup failed, local results unaffected"));
         runInBackground(task, "online-lookup");
+    }
+
+    private void replaceSelected() {
+        ModEntry entry = table.getSelectionModel().getSelectedItem();
+        if (entry == null || entry.onlineInfo().isEmpty()) {
+            statusLabel.setText("Run an online lookup first, replace needs a platform match");
+            return;
+        }
+        String gameVersion = mcVersionField.getText().isBlank()
+                ? detectedGameVersion.orElse("")
+                : mcVersionField.getText().strip();
+        if (gameVersion.isEmpty()) {
+            statusLabel.setText("Type the pack's MC version in the MC field first");
+            return;
+        }
+
+        statusLabel.setText("Finding a compatible version of " + entry.fileInfo().filename() + "...");
+        Task<Optional<ReplacementCandidate>> findTask = new Task<>() {
+            @Override
+            protected Optional<ReplacementCandidate> call() {
+                return Clients.replacer().findCandidate(entry, gameVersion);
+            }
+        };
+        findTask.setOnSucceeded(e -> findTask.getValue().ifPresentOrElse(
+                candidate -> confirmAndReplace(entry, candidate),
+                () -> statusLabel.setText("No compatible version found for MC " + gameVersion)));
+        findTask.setOnFailed(e -> statusLabel.setText("Version search failed"));
+        runInBackground(findTask, "find-candidate");
+    }
+
+    private void confirmAndReplace(ModEntry entry, ReplacementCandidate candidate) {
+        statusLabel.setText("");
+        if (!new ReplaceConfirmationDialog(entry, candidate).confirmed()) {
+            return;
+        }
+        statusLabel.setText("Downloading " + candidate.filename() + "...");
+        Task<ReplacementResult> replaceTask = new Task<>() {
+            @Override
+            protected ReplacementResult call() {
+                return Clients.replacer().replace(entry.fileInfo().path(), candidate);
+            }
+        };
+        replaceTask.setOnSucceeded(e -> {
+            ReplacementResult result = replaceTask.getValue();
+            statusLabel.setText(result.message());
+            if (result.success()) {
+                scan();
+            }
+        });
+        replaceTask.setOnFailed(e -> statusLabel.setText("Replace failed"));
+        runInBackground(replaceTask, "replace-mod");
     }
 
     private static void runInBackground(Task<?> task, String name) {
